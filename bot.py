@@ -253,6 +253,7 @@ async def play_next_song(guild):
     bot_spam_channel = bot.get_channel(1104485229474893974)
     voice_client = guild.voice_client
     server_queue = bot.music_queues.get(guild.id, [])
+
     if server_queue:
         if voice_client.is_playing() or voice_client.is_paused():
             return
@@ -288,25 +289,41 @@ async def play_now(ctx, *, query):
     print("in play now")
     bot_spam_channel = bot.get_channel(1104485229474893974)
     voice_client = ctx.guild.voice_client
+    url = findYT(query)
+    global current_track
+    current_track = url
+    global current_author
+    current_author = ctx.author
 
     if (
         voice_client
         and voice_client.is_connected()
         and (voice_client.is_playing() or voice_client.is_paused())
     ):
-        url = findYT(query)
-        global current_track
-        current_track = url
-        global current_author
-        current_author = ctx.author
-
         server_queue = bot.music_queues.get(ctx.guild.id, [])
         server_queue.insert(0, (query, url, ctx.author))
         bot.music_queues[ctx.guild.id] = server_queue
         voice_client.stop()
 
     else:
-        await bot_spam_channel.send("No song is currently playing.")
+        try:
+            channel = ctx.author.voice.channel
+        except AttributeError:
+            await bot_spam_channel.send("You are not in a voice channel.")
+            return
+        if not voice_client or not voice_client.is_connected():
+            voice_client = await channel.connect()
+        player = await create_player(url)
+
+        def after_playing(error):
+            if error:
+                print(f"Error playing next song: {error}")
+            asyncio.run_coroutine_threadsafe(play_next_song(ctx.guild), bot.loop)
+
+        voice_client.play(player, after=after_playing)
+        await bot_spam_channel.send(
+            f"Now Playing:{current_track}  requested by {ctx.author}"
+        )
 
 
 @bot.event
@@ -381,7 +398,7 @@ async def unshoot(ctx):
     for id, channel in afk:
         if id == ctx.author.id:
             await ctx.author.move_to(channel)
-            afk.remove(id, channel)
+            afk.remove((id, channel))
 
     await bot_spam_channel.send(
         f"{ctx.author.display_name} has been moved to the active voice channel channel."
@@ -460,6 +477,11 @@ async def delete(ctx, command_name):
                 else:
                     file.write(line)
             file.truncate()
+
+
+@bot.command(name="test", description="test_command")
+async def test(ctx):
+    ctx.send("recived")
 
 
 @bot.command(name="list", description="List all dynamically added commands.")
