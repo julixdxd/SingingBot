@@ -38,11 +38,26 @@ def findYT(query):
 def load_dynamic_commands():
     try:
         with open(COMMANDS_FILE, "r") as file:
+            command_name = ""
+            command_content = ""
+
             for line in file:
                 line = line.strip()
-                if line:
+
+                if not line:
+                    if command_name:
+                        dynamic_commands[command_name] = command_content.strip()
+                        command_name = ""
+                        command_content = ""
+                    continue
+
+                if not command_name:
                     command_name, command_content = line.split(":", 1)
-                    dynamic_commands[command_name] = command_content
+                else:
+                    command_content += "\n" + line
+
+            if command_name:
+                dynamic_commands[command_name] = command_content.strip()
     except FileNotFoundError:
         pass
 
@@ -385,7 +400,7 @@ async def add(ctx, command_name, *, command_content):
     dynamic_commands[command_name] = command_content
     await ctx.send(f"Command '{command_name}' added dynamically.")
     with open(COMMANDS_FILE, "a") as file:
-        file.write(f"{command_name}:{command_content}\n")
+        file.write(f"{command_name}:{command_content}\n\n")
 
 
 @bot.command(name="edit", description="Edit a command dynamically.")
@@ -394,33 +409,55 @@ async def edit(ctx, command_name, *, command_content):
         await ctx.send("not a dynamic command retor")
         return
     else:
+
+        def add(command_name, *, command_content):
+            with open(COMMANDS_FILE, "a") as file:
+                file.write(f"{command_name}:{command_content}\n\n")
+
+        def delete(command_name):
+            with open(COMMANDS_FILE, "r+") as file:
+                lines = file.readlines()
+                file.seek(0)
+                skip_lines = False
+                for line in lines:
+                    if line.startswith(f"{command_name}:"):
+                        skip_lines = True
+                        continue
+                    if skip_lines and line.strip() == "":
+                        skip_lines = False
+                    elif skip_lines:
+                        continue
+                    else:
+                        file.write(line)
+                file.truncate()
+
         dynamic_commands[command_name] = command_content
-        with open(COMMANDS_FILE, "r+") as file:
-            lines = file.readlines()
-            file.seek(0)
-            for line in lines:
-                if not line.startswith(f"{command_name}:"):
-                    file.write(line)
-            file.write(f"{command_name}:{command_content}\n")
-            file.truncate()
+        delete(command_name)
+        add(command_name=command_name, command_content=command_content)
         await ctx.send(f"Command '{command_name}' updated")
 
 
 @bot.command(name="delete", description="Delete a dynamic command.")
-async def edit(ctx, command_name):
+async def delete(ctx, command_name):
     if command_name not in dynamic_commands:
         await ctx.send("not a dynamic command retor")
         return
     else:
         del dynamic_commands[command_name]
         await ctx.send(f"Command '{command_name}' has been deleted.")
-
-        # Delete the command from the text file
         with open(COMMANDS_FILE, "r+") as file:
             lines = file.readlines()
             file.seek(0)
+            skip_lines = False
             for line in lines:
-                if not line.startswith(f"{command_name}:"):
+                if line.startswith(f"{command_name}:"):
+                    skip_lines = True
+                    continue
+                if skip_lines and line.strip() == "":
+                    skip_lines = False
+                elif skip_lines:
+                    continue
+                else:
                     file.write(line)
             file.truncate()
 
