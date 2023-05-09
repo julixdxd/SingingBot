@@ -17,7 +17,8 @@ yt_dl_opts = {"format": "bestaudio/best"}
 ytdl = youtube_dl.YoutubeDL(yt_dl_opts)
 dynamic_commands = {}
 COMMANDS_FILE = "added_commands.txt"
-
+EMOTE_FILE = "emotes.txt"
+triggers = {}
 
 ffmpeg_options = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
@@ -62,9 +63,18 @@ def load_dynamic_commands():
         pass
 
 
+def load_emotes():
+    with open(EMOTE_FILE, "r") as file:
+        lines = file.readlines()
+        for line in lines:
+            trigger, emote = line.strip().split(";")
+            triggers[trigger] = emote
+
+
 @bot.event
 async def on_ready():
     load_dynamic_commands()
+    load_emotes()
     print(f"Bot is online. Logged in as {bot.user.name}")
 
 
@@ -103,7 +113,6 @@ async def leave(ctx):
 
 @bot.command(name="play", description="Play a YouTube video.")
 async def play(ctx, *, query):
-    print("in play")
     bot_spam_channel = bot.get_channel(1104485229474893974)
     try:
         channel = ctx.author.voice.channel
@@ -249,7 +258,6 @@ bot.music_queues = {}  # Server-specific song queues
 
 
 async def play_next_song(guild):
-    print("in play next song")
     bot_spam_channel = bot.get_channel(1104485229474893974)
     voice_client = guild.voice_client
     server_queue = bot.music_queues.get(guild.id, [])
@@ -286,7 +294,6 @@ async def play_next_song(guild):
     description="Play a specific link immediately and continue the queue afterward.",
 )
 async def play_now(ctx, *, query):
-    print("in play now")
     bot_spam_channel = bot.get_channel(1104485229474893974)
     voice_client = ctx.guild.voice_client
     url = findYT(query)
@@ -479,11 +486,6 @@ async def delete(ctx, command_name):
             file.truncate()
 
 
-@bot.command(name="test", description="test_command")
-async def test(ctx):
-    ctx.send("recived")
-
-
 @bot.command(name="list", description="List all dynamically added commands.")
 async def list(ctx):
     commands_list = "\n".join(dynamic_commands.keys())
@@ -492,6 +494,13 @@ async def list(ctx):
 
 @bot.event
 async def on_message(message):
+    if not message.author.bot:
+        for trigger, emote in triggers.items():
+            if trigger.lower() in message.content.lower():
+                # Delete the triggering message
+                await message.delete()
+                await message.channel.send(emote)
+                return
     # Check if the message starts with the prefix and a dynamically added command
     if message.content.startswith(PREFIX):
         command_name = message.content[len(PREFIX) :].split()[0]
@@ -513,8 +522,6 @@ async def on_message(message):
                     print(f"processing {message}")
                     await bot.process_commands(message)
                     return
-
-            return
 
 
 bot.run(TOKEN)
