@@ -424,7 +424,7 @@ async def add(ctx, command_name, *, command_content):
     dynamic_commands[command_name] = command_content
     await ctx.send(f"Command '{command_name}' added dynamically.")
     with open(COMMANDS_FILE, "a") as file:
-        file.write(f"{command_name}:{command_content}\n\n")
+        file.write(f"\n{command_name}:{command_content}\n\n")
 
 
 @bot.command(name="edit", description="Edit a command dynamically.")
@@ -436,7 +436,7 @@ async def edit(ctx, command_name, *, command_content):
 
         def add(command_name, *, command_content):
             with open(COMMANDS_FILE, "a") as file:
-                file.write(f"{command_name}:{command_content}\n\n")
+                file.write(f"\n{command_name}:{command_content}")
 
         def delete(command_name):
             with open(COMMANDS_FILE, "r+") as file:
@@ -492,15 +492,71 @@ async def list(ctx):
     await ctx.send(f"List of dynamically added commands:\n{commands_list}")
 
 
+async def edit_emote(ctx, trigger, *, emote_link):
+    if trigger not in triggers:
+        await ctx.send("not a dynamic command retor")
+        return
+    else:
+
+        def add_emote(trigger, *, emote_link):
+            with open(EMOTE_FILE, "a") as file:
+                file.write(f"\n{trigger};{emote_link}")
+
+        def delete_emote(trigger):
+            with open(EMOTE_FILE, "r+") as file:
+                lines = file.readlines()
+                file.seek(0)
+                for line in lines:
+                    if line.split(";")[0] == trigger:
+                        continue
+                    else:
+                        file.write(line)
+                file.truncate()
+
+        triggers[trigger] = emote_link
+        delete_emote(trigger)
+        add_emote(trigger, emote_link)
+        await ctx.send(f"Emote '{trigger}' updated")
+
+
+@bot.command(name="add_emote", description="Add a emote dynamically.")
+async def add_emote(ctx, trigger, *, emote_link):
+    if trigger in triggers:
+        await ctx.send("Already an emote. Can't use this bucko")
+        return
+    triggers[trigger] = emote_link
+    await ctx.send(f"Command '{trigger}' added dynamically.")
+    with open(EMOTE_FILE, "a") as file:
+        file.write(f"\n{trigger};{emote_link}")
+
+
+@bot.command(name="delete_emote", description="Delete a emote")
+async def delete(ctx, trigger):
+    if trigger not in triggers:
+        await ctx.send("not a dynamic emote retor")
+        return
+    else:
+        del triggers[trigger]
+        await ctx.send(f"Emote '{trigger}' has been deleted.")
+        with open(EMOTE_FILE, "r+") as file:
+            lines = file.readlines()
+            file.seek(0)
+            for line in lines:
+                if line.split(";")[0] == trigger:
+                    continue
+                else:
+                    file.write(line)
+            file.truncate()
+
+
+@bot.command(name="list_emotes", description="List all emotes")
+async def list_emotes(ctx):
+    triggers_list = "\n".join(triggers.keys())
+    await ctx.send(f"List of dynamically added commands:\n{triggers_list}")
+
+
 @bot.event
 async def on_message(message):
-    if not message.author.bot:
-        for trigger, emote in triggers.items():
-            if trigger.lower() in message.content.lower():
-                # Delete the triggering message
-                await message.delete()
-                await message.channel.send(emote)
-                return
     # Check if the message starts with the prefix and a dynamically added command
     if message.content.startswith(PREFIX):
         command_name = message.content[len(PREFIX) :].split()[0]
@@ -522,6 +578,13 @@ async def on_message(message):
                     print(f"processing {message}")
                     await bot.process_commands(message)
                     return
+    if not message.author.bot:
+        for trigger, emote in triggers.items():
+            if trigger.lower() in message.content.lower():
+                # Delete the triggering message
+                await message.delete()
+                await message.channel.send(emote)
+                return
 
 
 bot.run(TOKEN)
