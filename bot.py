@@ -2,10 +2,14 @@ import discord
 from discord.ext import commands
 import asyncio
 import youtube_dl
+import yt_dlp
 from youtubesearchpython import VideosSearch
 import re
 import random
 import config
+import requests
+from PIL import Image
+import json
 
 TOKEN = config.TOKEN
 PREFIX = "!"
@@ -13,15 +17,32 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 current_track = None
 current_author = None
-yt_dl_opts = {"format": "bestaudio/best"}
-ytdl = youtube_dl.YoutubeDL(yt_dl_opts)
+yt_dl_opts = {
+    "format": "bestaudio/best",
+    "extractaudio": True,
+    "audioformat": "mp3",
+    "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
+    "restrictfilenames": True,
+    "noplaylist": True,
+    "nocheckcertificate": True,
+    "ignoreerrors": False,
+    "logtostderr": False,
+    "quiet": True,
+    "no_warnings": True,
+    "default_search": "ytsearch",
+    "source_address": "0.0.0.0",
+}
+ytdl = yt_dlp.YoutubeDL(yt_dl_opts)
 dynamic_commands = {}
-COMMANDS_FILE = "added_commands.txt"
-EMOTE_FILE = "emotes.txt"
-triggers = {}
+COMMANDS_FILE = "commands.json"
+EMOTE_FILE = "emotes.json"
+EMOJI_FOLDER = "C:\\Users\\Julian\\Pictures\\DISCORDBOTEMOJIS"
+EMOJI_FOLDER = "C:\\Users\\Julian\\Pictures\\DISCORDBOTEMOTES"
+SHOWME_FILE = "showme.txt"
+
 
 ffmpeg_options = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "before_options": f"-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",
 }
 
@@ -38,43 +59,28 @@ def findYT(query):
 
 def load_dynamic_commands():
     try:
-        with open(COMMANDS_FILE, "r") as file:
-            command_name = ""
-            command_content = ""
-
-            for line in file:
-                line = line.strip()
-
-                if not line:
-                    if command_name:
-                        dynamic_commands[command_name] = command_content.strip()
-                        command_name = ""
-                        command_content = ""
-                    continue
-
-                if not command_name:
-                    command_name, command_content = line.split(":", 1)
-                else:
-                    command_content += "\n" + line
-
-            if command_name:
-                dynamic_commands[command_name] = command_content.strip()
+        with open(COMMANDS_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
     except FileNotFoundError:
-        pass
+        return {}
+
+
+dynamic_commands = load_dynamic_commands()
 
 
 def load_emotes():
-    with open(EMOTE_FILE, "r") as file:
-        lines = file.readlines()
-        for line in lines:
-            trigger, emote = line.strip().split(";")
-            triggers[trigger] = emote
+    try:
+        with open(EMOTE_FILE, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+triggers = load_emotes()
 
 
 @bot.event
 async def on_ready():
-    load_dynamic_commands()
-    load_emotes()
     print(f"Bot is online. Logged in as {bot.user.name}")
 
 
@@ -248,9 +254,30 @@ async def create_player(url):
         None, lambda: ytdl.extract_info(url, download=False)
     )
     song = data["url"]
+
     player = discord.FFmpegPCMAudio(
         song, **ffmpeg_options, executable="G:\\ffmpeg\\bin\\ffmpeg.exe"
     )
+    return player
+
+
+async def create_playerVLControl(url, volume):
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(
+        None, lambda: ytdl.extract_info(url, download=False)
+    )
+    song = data["url"]
+    optionsVL = {
+        "before_options": f"--reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 ",
+        "options": f"-vn ",
+    }
+
+    player = discord.PCMVolumeTransformer(
+        discord.FFmpegPCMAudio(
+            song, **optionsVL, executable="G:\\ffmpeg\\bin\\ffmpeg.exe"
+        )
+    )
+
     return player
 
 
@@ -293,7 +320,7 @@ async def play_next_song(guild):
     name="play_now",
     description="Play a specific link immediately and continue the queue afterward.",
 )
-async def play_now(ctx, *, query):
+async def play_now(ctx: commands.Context, *, query):
     bot_spam_channel = bot.get_channel(1104485229474893974)
     voice_client = ctx.guild.voice_client
     url = findYT(query)
@@ -320,14 +347,16 @@ async def play_now(ctx, *, query):
             return
         if not voice_client or not voice_client.is_connected():
             voice_client = await channel.connect()
-        player = await create_player(url)
+
+            player = await create_player(url)
 
         def after_playing(error):
             if error:
                 print(f"Error playing next song: {error}")
             asyncio.run_coroutine_threadsafe(play_next_song(ctx.guild), bot.loop)
 
-        voice_client.play(player, after=after_playing)
+            voice_client.play(player, after=after_playing)
+
         await bot_spam_channel.send(
             f"Now Playing:{current_track}  requested by {ctx.author}"
         )
@@ -423,67 +452,33 @@ async def add(ctx, command_name, *, command_content):
         return
     dynamic_commands[command_name] = command_content
     await ctx.send(f"Command '{command_name}' added dynamically.")
-    with open(COMMANDS_FILE, "a") as file:
-        file.write(f"\n{command_name}:{command_content}\n\n")
+
+    with open(COMMANDS_FILE, "w", encoding="utf-8") as file:
+        json.dump(dynamic_commands, file, indent=4)
 
 
 @bot.command(name="edit", description="Edit a command dynamically.")
 async def edit(ctx, command_name, *, command_content):
     if command_name not in dynamic_commands:
-        await ctx.send("not a dynamic command retor")
+        await ctx.send("Not a dynamic command.")
         return
-    else:
+    dynamic_commands[command_name] = command_content
+    await ctx.send(f"Command '{command_name}' updated.")
 
-        def add(command_name, *, command_content):
-            with open(COMMANDS_FILE, "a") as file:
-                file.write(f"\n{command_name}:{command_content}")
-
-        def delete(command_name):
-            with open(COMMANDS_FILE, "r+") as file:
-                lines = file.readlines()
-                file.seek(0)
-                skip_lines = False
-                for line in lines:
-                    if line.startswith(f"{command_name}:"):
-                        skip_lines = True
-                        continue
-                    if skip_lines and line.strip() == "":
-                        skip_lines = False
-                    elif skip_lines:
-                        continue
-                    else:
-                        file.write(line)
-                file.truncate()
-
-        dynamic_commands[command_name] = command_content
-        delete(command_name)
-        add(command_name=command_name, command_content=command_content)
-        await ctx.send(f"Command '{command_name}' updated")
+    with open(COMMANDS_FILE, "w", encoding="utf-8") as file:
+        json.dump(dynamic_commands, file, indent=4)
 
 
 @bot.command(name="delete", description="Delete a dynamic command.")
 async def delete(ctx, command_name):
     if command_name not in dynamic_commands:
-        await ctx.send("not a dynamic command retor")
+        await ctx.send("Not a dynamic command.")
         return
-    else:
-        del dynamic_commands[command_name]
-        await ctx.send(f"Command '{command_name}' has been deleted.")
-        with open(COMMANDS_FILE, "r+") as file:
-            lines = file.readlines()
-            file.seek(0)
-            skip_lines = False
-            for line in lines:
-                if line.startswith(f"{command_name}:"):
-                    skip_lines = True
-                    continue
-                if skip_lines and line.strip() == "":
-                    skip_lines = False
-                elif skip_lines:
-                    continue
-                else:
-                    file.write(line)
-            file.truncate()
+    del dynamic_commands[command_name]
+    await ctx.send(f"Command '{command_name}' has been deleted.")
+
+    with open(COMMANDS_FILE, "w", encoding="utf-8") as file:
+        json.dump(dynamic_commands, file, indent=4)
 
 
 @bot.command(name="list", description="List all dynamically added commands.")
@@ -492,67 +487,131 @@ async def list(ctx):
     await ctx.send(f"List of dynamically added commands:\n{commands_list}")
 
 
+@bot.command(name="edit_emote", description="Edit an existing emote.")
 async def edit_emote(ctx, trigger, *, emote_link):
     if trigger not in triggers:
-        await ctx.send("not a dynamic command retor")
+        await ctx.send("Emote does not exist. Can't edit.")
         return
-    else:
+    triggers[trigger] = emote_link
+    await ctx.send(f"Emote '{trigger}' edited successfully.")
 
-        def add_emote(trigger, *, emote_link):
-            with open(EMOTE_FILE, "a") as file:
-                file.write(f"\n{trigger};{emote_link}")
-
-        def delete_emote(trigger):
-            with open(EMOTE_FILE, "r+") as file:
-                lines = file.readlines()
-                file.seek(0)
-                for line in lines:
-                    if line.split(";")[0] == trigger:
-                        continue
-                    else:
-                        file.write(line)
-                file.truncate()
-
-        triggers[trigger] = emote_link
-        delete_emote(trigger)
-        add_emote(trigger, emote_link)
-        await ctx.send(f"Emote '{trigger}' updated")
+    with open(EMOTE_FILE, "w", encoding="utf-8") as file:
+        json.dump(triggers, file, indent=4)
 
 
-@bot.command(name="add_emote", description="Add a emote dynamically.")
+@bot.command(name="add_emote", description="Add an emote dynamically.")
 async def add_emote(ctx, trigger, *, emote_link):
     if trigger in triggers:
         await ctx.send("Already an emote. Can't use this bucko")
         return
     triggers[trigger] = emote_link
     await ctx.send(f"Command '{trigger}' added dynamically.")
-    with open(EMOTE_FILE, "a") as file:
-        file.write(f"\n{trigger};{emote_link}")
+
+    with open(EMOTE_FILE, "w", encoding="utf-8") as file:
+        json.dump(triggers, file, indent=4)
 
 
-@bot.command(name="delete_emote", description="Delete a emote")
-async def delete(ctx, trigger):
+@bot.command(name="delete_emote", description="Delete an existing emote.")
+async def delete_emote(ctx, trigger):
     if trigger not in triggers:
-        await ctx.send("not a dynamic emote retor")
+        await ctx.send("Emote does not exist. Can't delete.")
         return
-    else:
-        del triggers[trigger]
-        await ctx.send(f"Emote '{trigger}' has been deleted.")
-        with open(EMOTE_FILE, "r+") as file:
-            lines = file.readlines()
-            file.seek(0)
-            for line in lines:
-                if line.split(";")[0] == trigger:
-                    continue
-                else:
-                    file.write(line)
-            file.truncate()
+    del triggers[trigger]
+    await ctx.send(f"Emote '{trigger}' deleted successfully.")
+
+    with open(EMOTE_FILE, "w", encoding="utf-8") as file:
+        json.dump(triggers, file, indent=4)
 
 
 @bot.command(name="list_emotes", description="List all emotes")
 async def list_emotes(ctx):
     triggers_list = "\n".join(triggers.keys())
     await ctx.send(f"List of dynamically added commands:\n{triggers_list}")
+
+
+@bot.command(name="create_emoji", description="add emoji to server")
+async def create_emoji(ctx: commands.Context, name, image_link: str):
+    if not (
+        image_link.endswith(".jpg")
+        or image_link.endswith(".jpeg")
+        or image_link.endswith(".png")
+        or image_link.endswith(".webp")
+    ):
+        await ctx.send(f"Not a jpg or a png")
+        return
+    if image_link.endswith(".jpg") or image_link.endswith(".jpeg"):
+        format = "JPEG"
+    elif image_link.endswith(".png"):
+        format = "PNG"
+    elif image_link.endswith(".webp"):
+        format = "png"
+        file_name = f"{EMOJI_FOLDER}\\{name}.png"
+        img = Image.open(requests.get(image_link, stream=True).raw).convert()
+        img.save(fp=file_name, format=format)
+        with open(file_name, "rb") as image:
+            byte_image = image.read()
+            await ctx.guild.create_custom_emoji(name=name, image=byte_image)
+            return
+    file_name = f"{EMOJI_FOLDER}\\{name}.{format.lower()}"
+    img = Image.open(requests.get(image_link, stream=True).raw)
+    img.save(fp=file_name, format=format)
+    with open(file_name, "rb") as image:
+        byte_image = image.read()
+        await ctx.guild.create_custom_emoji(name=name, image=byte_image)
+
+
+@bot.command(name="delete_emoji", description="deletes a emoji")
+async def delete_emoji(ctx: commands.Context, name):
+    for emoji in ctx.guild.emojis:
+        if emoji.name == name:
+            await emoji.delete()
+            return
+    await ctx.send(f"No emoji named {name} is in the list. Check your spelling :)))")
+
+
+@bot.command(name="showme", description="posts random image/gif")
+async def showme(ctx: commands.Context, *, name):
+    lines = []
+    title = name.lower()
+    start_found = False
+    with open(SHOWME_FILE, "r") as file:
+        for line in file:
+            line = line.strip()
+            if title == line[:-1]:
+                start_found = True
+                continue
+            elif line.endswith(":") and start_found:
+                break
+            elif start_found:
+                lines.append(line)
+    if lines:
+        await ctx.send(random.choice(lines))
+        await ctx.send(random.choice(lines))
+
+    else:
+        await ctx.send(
+            f"{name} is not yet showable. Send image and gif links to JJ and pray"
+        )
+
+
+@bot.command(name="showme_help", description="display possible showme's")
+async def showme(ctx: commands.Context):
+    titles = []
+    with open(SHOWME_FILE, "r") as file:
+        for line in file:
+            line = line.strip()
+            if line.endswith(":"):
+                titles.append(line[:-1])
+    await ctx.send(f"possible showme's so far:\n{titles}")
+
+
+@bot.command(name="memerater", description="rates your meme")
+async def memerater(ctx: commands.Context):
+    if ctx.author.id == 205628227559882752:
+        score = random.randint(7, 10)
+    else:
+        score = random.randint(0, 10)
+    await ctx.send(f"{score}/10 Nice Job :)))")
 
 
 @bot.event
@@ -580,7 +639,7 @@ async def on_message(message):
                     return
     if not message.author.bot:
         for trigger, emote in triggers.items():
-            if trigger.lower() in message.content.lower():
+            if trigger.lower() == message.content.lower():
                 # Delete the triggering message
                 await message.delete()
                 await message.channel.send(emote)
